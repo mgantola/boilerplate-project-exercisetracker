@@ -1,152 +1,182 @@
-const express = require('express')
-const app = express()
-const cors = require('cors')
-require('dotenv').config()
+const express = require("express");
+const app = express();
+const cors = require("cors");
+require("dotenv").config();
 
-const mongoose = require("mongoose")
-const User = require("./models/users");
-const Exercise = require("./models/exercises")
-const bodyParser = require("body-parser");
+//The express.json() and express.urlencoded() middleware have been added to provide request body parsing support out-of-the-box.
+app.use(express.urlencoded({ extended: true }));
+app.use(express.json());
 
-
-mongoose.connect(process.env.MONGO_URI, { useNewUrlParser: true, useUnifiedTopology: true }, () => {
-  console.log("DB Connected Successfully");
-});
-app.use(bodyParser.json());
-app.use(bodyParser.urlencoded({ extended: true }))
-
-
-app.use(cors())
-app.use(express.static('public'))
-app.get('/', (req, res) => {
-  res.sendFile(__dirname + '/views/index.html')
+app.use(cors());
+app.use(express.static("public"));
+app.get("/", (req, res) => {
+  res.sendFile(__dirname + "/views/index.html");
 });
 
+// connecting database
+const mySecret = process.env["MONGO_URI"];
 
-// Exercise Tracker Solution :D
-app.post('/api/users', async (req, res) => {
-  try {
-    var NewUser = await new User({ username: req.body.username });
-    const savedUser = await NewUser.save((err) => {
-      if (err) {
-        console.log(err);
-        res.send("error")
-      }
-      console.log("user saved success");
-    });
-    //let dispData=await User.find({_id:NewUser._id},{username:1,_id:1});
-    res.status(200).json({
-      username: NewUser.username,
-      _id: NewUser._id
-    });
+let mongoose;
+try {
+  mongoose = require("mongoose");
+} catch (error) {
+  console.log(error);
+}
+mongoose.connect(
+  process.env.MONGO_URI,
+  {
+    useNewUrlParser: true,
+    useUnifiedTopology: true,
+    useFindAndModify: false,
+  },
+  function (error) {
+    if (error) {
+      console.log("Database error or database connection error " + error);
+    }
+    console.log("Database state is " + !!mongoose.connection.readyState);
   }
-  catch (e) {
-    res.status(500).json(e);
-  }
+);
+
+// importing UserTracker modal
+const UserTracker = require("./models/users.js").UserTrackerModel;
+
+// **************** create a new user ***************
+// check if the username exists in db middleware
+const checkUserName = function (req, res, next) {
+  let userName = req.body.username;
+  UserTracker.findOne({ username: userName }).then((record) => {
+    if (record) {
+      res.send("Username already taken");
+    } else {
+      console.log("proceeding registration...");
+      next();
+    }
+  });
+};
+
+// create a new user
+app.post("/api/users", checkUserName, function (req, res) {
+  let userName = req.body.username;
+  var newUser = new UserTracker({
+    username: userName,
+  });
+  newUser.save(function (err, record) {
+    if (err) {
+      console.log(err);
+    } else {
+      console.log("new user is saved successfully");
+      res.json({ username: record.username, _id: record._id });
+    }
+  });
 });
 
-
-app.post("/api/users/:_id/exercises", async (req, res) => {
-  try {
-    if (req.body.date == " " || req.body.date == undefined) {
-      var date = new Date().toDateString();
-    }
-    else {
-      var date = new Date(req.body.date).toDateString();
-    }
-    var exerciseData = {
-      description: req.body.description,
-      duration: req.body.duration,
-      date: date
-    }
-    const userData = await User.findOneAndUpdate({ _id: req.params._id }, { $push: { logs: exerciseData }, $inc: { count: 1 } }, { new: true });
-
-    console.log(userData);
-    res.status(200).json({
-
-      username: userData.username,
-      description: req.body.description,
-      duration: req.body.duration,
-      date: new Date(date).toDateString(),
-      _id: userData._id
-    });
-  }
-  catch (e) {
-    console.log(e);
-  }
-})
-
-app.get("/api/users", async (req, res) => {
-  try {
-    const allUser = await User.find({}, { username: 1, _id: 1 });
-    res.json(allUser);
-  }
-  catch (e) {
-    res.json("Error");
-  }
+// ***************** get an array of all users ****************
+app.get("/api/users", function (req, res) {
+  console.log("*********************");
+  var query = UserTracker.find();
+  query
+    .select(["_id", "username"])
+    .then((records) => {
+      res.send(records);
+    })
+    .catch((err) => res.send(err.message));
 });
 
+// ************* add exercise to an existed user **********
+// importing UserTracker modal
+const ExerciseTracker = require("./models/exercises.js").ExerciseTrackerModel;
 
-app.get("/api/users/:_id/logs", async (req, res) => {
-  try {
-    if (Object.keys(req.query).length === 0) {
-      const userData = await User.find({ _id: req.params._id }, { __v: 0 });
-      console.log("log without query", userData[0]);
-      res.json(userData[0]);
-    }
-    else {
-      console.log("else part entered")
-      var from = req.query.from;
-      var to = req.query.to;
-      var limit = req.query.limit;
-      console.log(from, to, limit);
-      if (from) {
-        var from = new Date(req.query.from).toISOString().split('T')[0];
-        console.log("from", from);
-        if (!to) {
-          var to = new Date().toISOString().split('T')[0];
-          console.log(to);
-        }
-        else {
-          var to = new Date(req.query.to).toISOString().split('T')[0];
-        }
-      }
+app.post("/api/users/:_id/exercises", function (req, res) {
+  let userId = req.params._id;
+  let description = req.body.description;
+  let duration = Number(req.body.duration);
+  let date =
+    new Date(req.body.date).toDateString() === "Invalid Date"
+      ? new Date().toDateString()
+      : new Date(req.body.date).toDateString();
+  let userExercise = {
+    description: description,
+    duration: duration,
+    date: date,
+  };
 
-      var userData = await User.find({ _id: req.params._id }, { __v: 0 });
-
-      console.log(userData, "<------THIS IS USER DATA");
-      var logsArray = userData[0].log;
-      console.log("this is array of log OG", logsArray);
-      console.log(from, to);
-      if (from || (from && to)) {
-        var filtLogs = logsArray.filter((log) => {
-          var formdate = new Date(log.date).toISOString().split('T')[0];
-          return ((from && formdate >= from) && (to && formdate <= to))
+  UserTracker.findOne({ _id: userId })
+    .then((user) => {
+      var addExercise = ExerciseTracker.create(userExercise)
+        .then((exercise) => {
+          user.count += 1;
+          user.log.push(userExercise);
+          user.save(function (err, data) {
+            if (err) {
+              console.log(err.message);
+            }
+            console.log("exercise added successfully");
+            res.json({
+              _id: user._id,
+              username: user.username,
+              description: description,
+              duration: Number(duration),
+              date: date,
+            });
+          });
         })
-      } else {
-        var filtLogs = logsArray;
-      }
-      console.log("this is filtered logs--->", filtLogs);
-
-      const slicedLogs = limit ? filtLogs.slice(0, limit) : filtLogs;
-      
-      console.log("SLICED OUTPUT WITH LIMIT", slicedLogs);
-      return res.json({
-        _id: req.params._id,
-        username: userData.username,
-        count: slicedLogs.length,
-        log: slicedLogs
-      });
-    }
-  } catch (e) { res.json(e) }
+        .catch((err) => {
+          console.log(err.message);
+          res.send(err.message);
+        });
+    })
+    .catch((err) => {
+      console.log(err.message);
+      res.send(err.message);
+    });
 });
 
+// ************* get a full exercise log of any user **********
+// check from, to and limit validity middleware
+const checkQuery = function (req, res, next) {
+  req.from =
+    new Date(req.query.from).toDateString() === "Invalid Date"
+      ? true
+      : new Date(req.query.from);
+  req.to =
+    new Date(req.query.to).toDateString() === "Invalid Date"
+      ? false
+      : new Date(req.query.to);
+  req.limit = Number.isInteger(Number(req.query.limit))
+    ? Number(req.query.limit)
+    : undefined;
+  next();
+};
 
-
-
-
-
+app.get("/api/users/:_id/logs?", checkQuery, function (req, res) {
+  var thatUser = req.params._id;
+  console.log("limit: ", req.limit);
+  UserTracker.findOne({ _id: thatUser })
+    .then((record) => {
+      var userQuery = { _id: record._id, username: record.username };
+      var userLogs = record.log
+        .sort((a, b) => new Date(a.date) - new Date(b.date))
+        .filter(
+          (a) =>
+            new Date(a.date) >= req.from &&
+            (!req.to ? true : new Date(a.date) <= req.to)
+        )
+        .slice(0, req.limit);
+      userQuery.count = userLogs.length;
+if (req.from instanceof Date) {
+        userQuery.from = req.from.toDateString();
+      }
+      if (req.to instanceof Date) {
+        userQuery.to = req.to.toDateString();
+      }      
+      userQuery.log = userLogs;
+      res.json(userQuery);
+    })
+    .catch((err) => {
+      res.send(err.message);
+    });
+});
 
 const listener = app.listen(process.env.PORT || 3000, () => {
-  console.log('Your app is listening on port ' + listener.address().port)
-})
+  console.log("Your app is listening on port " + listener.address().port);
+});

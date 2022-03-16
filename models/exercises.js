@@ -1,22 +1,15 @@
-const mongoose=require("mongoose");
-const express=require("express");
-const subSchema=new mongoose.Schema({
-    description:{
-        type:String,
-        required:true,
-        _id:false
-    },
-    duration:{
-        type:Number,
-        required:true,
-        _id:false
-    },
-    date:{
-        type:String,
-        required:true,
-        _id:false
-    },
-    _id:false
-});
+const mongoose = require("mongoose")
+let ExerciseTracker;
 
-module.exports=subSchema;
+// creating user log nested schema
+const exerciseSchema = new mongoose.Schema({
+    description:{type:String,required:true},
+    duration: {type:Number,
+               required:true},
+    date: {type:String}
+    });
+
+// ceating a model
+ExerciseTracker = mongoose.model("ExerciseTracker", exerciseSchema);
+
+exports.ExerciseTrackerModel = ExerciseTracker;
